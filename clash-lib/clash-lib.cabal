@@ -157,6 +157,7 @@ Library
                       -- TODO bounds
                       lifted-async,
                       lifted-base,
+                      lockfree-queue,
                       monad-control,
                       mtl                     >= 2.1.2    && < 2.3,
                       ordered-containers      >= 0.2      && < 0.3,

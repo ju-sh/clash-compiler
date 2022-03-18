@@ -23,11 +23,13 @@ import qualified Control.Concurrent.MVar.Lifted as MVar
 import           Control.Concurrent.Supply        (Supply)
 import           Control.Exception                (throw)
 import qualified Control.Lens                     as Lens
-import           Control.Monad                    (when)
+import           Control.Monad                    (when, unless)
 import qualified Control.Monad.IO.Class as Monad  (liftIO)
 import           Control.Monad.State.Strict       (State)
+import           Data.Bifunctor                   (bimap)
 import           Data.Default                     (def)
 import           Data.Either                      (lefts,partitionEithers)
+import           Data.Foldable                    (traverse_)
 import qualified Data.HashMap.Strict              as HashMap
 import           Data.List
   (intersect, mapAccumL)
@@ -35,6 +37,7 @@ import qualified Data.Map                         as Map
 import qualified Data.Maybe                       as Maybe
 import qualified Data.Set                         as Set
 import qualified Data.Set.Lens                    as Lens
+import qualified Data.Concurrent.Queue.MichaelScott as MS
 
 #if MIN_VERSION_prettyprinter(1,7,0)
 import           Prettyprinter                    (vcat)
@@ -66,8 +69,8 @@ import           Clash.Core.TyCon (TyConMap)
 import           Clash.Core.Type                  (isPolyTy)
 import           Clash.Core.Var                   (Id, varName, varType)
 import           Clash.Core.VarEnv
-  (VarEnv, elemVarSet, eltsVarEnv, emptyInScopeSet, emptyVarEnv,
-   extendVarEnv, lookupVarEnv, mapVarEnv, mapMaybeVarEnv,
+  (VarEnv, VarSet, elemVarSet, eltsVarEnv, emptyInScopeSet, emptyVarEnv, emptyVarSet,
+   extendVarEnv, extendVarSet, lookupVarEnv, mapVarEnv, mapMaybeVarEnv,
    mkVarEnv, mkVarSet, notElemVarEnv, notElemVarSet, nullVarEnv)
 import           Clash.Debug                      (traceIf)
 import           Clash.Driver.Types
@@ -150,11 +153,30 @@ runNormalization env supply globals typeTrans peEval eval rcsMap lock entities s
 
 normalize :: [Id] -> NormalizeSession BindingMap
 normalize tops = do
-  normBinds <- Async.mapConcurrently normalize' tops
-  pure (mkVarEnv (concat normBinds))
+  q <- Monad.liftIO MS.newQ
+  traverse_ (Monad.liftIO . MS.pushL q) tops
+  binds <- MVar.newMVar (emptyVarSet, [])
+  -- one thread per top-level binding
+  Async.replicateConcurrently_ (length tops) (normalizeStep q binds)
+  mkVarEnv . snd <$> MVar.readMVar binds
 
-normalize' :: Id -> NormalizeSession [(Id, Binding Term)]
-normalize' nm = do
+normalizeStep
+    :: MS.LinkedQueue Id
+    -> MVar (VarSet, [(Id, Binding Term)])
+    -> NormalizeSession ()
+normalizeStep q binds = do
+  res <- Monad.liftIO $ MS.tryPopR q
+  case res of
+      Just id' -> do
+        (bound, _) <- MVar.readMVar binds
+        unless (id' `elemVarSet` bound) $ do
+          pair <- normalize' id' q
+          MVar.modifyMVar_ binds (pure . bimap (`extendVarSet` id') (pair:))
+        normalizeStep q binds
+      Nothing  -> pure ()
+
+normalize' :: Id -> MS.LinkedQueue Id -> NormalizeSession (Id, Binding Term)
+normalize' nm q = do
   bndrsV <- Lens.use bindings
   exprM <- MVar.withMVar bndrsV (pure . lookupVarEnv nm)
   let nmS = showPpr (varName nm)
@@ -207,8 +229,8 @@ normalize' nm = do
 
             -- traceM ("normalize: end: " <> nmS)
 
-            normChildren <- Async.mapConcurrently normalize' toNormalize
-            return ((nm, tmNorm) : concat normChildren)
+            traverse_ (Monad.liftIO . MS.pushL q) toNormalize
+            pure (nm, tmNorm)
          else
            do
             -- Throw an error for unrepresentable topEntities and functions
@@ -230,7 +252,7 @@ normalize' nm = do
                             , showPpr (coreTypeOf nm')
                             , ") has a non-representable return type."
                             , " Not normalising:\n", showPpr tm] )
-                    (return [(nm,(Binding nm' sp inl pr tm r))])
+                    (return (nm,(Binding nm' sp inl pr tm r)))
 
 
     Nothing -> error $ $(curLoc) ++ "Expr belonging to bndr: " ++ nmS ++ " not found"

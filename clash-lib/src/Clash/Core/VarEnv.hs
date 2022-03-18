@@ -44,6 +44,7 @@ module Clash.Core.VarEnv
   , emptyVarSet
   , unitVarSet
     -- ** Modification
+  , extendVarSet
   , delVarSetByKey
   , unionVarSet
   , differenceVarSet
