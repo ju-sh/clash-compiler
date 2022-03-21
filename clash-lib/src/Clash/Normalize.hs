@@ -26,7 +26,7 @@ import qualified Control.Lens                     as Lens
 import           Control.Monad                    (when, unless)
 import qualified Control.Monad.IO.Class as Monad  (liftIO)
 import           Control.Monad.State.Strict       (State)
-import           Data.Bifunctor                   (bimap)
+import           Data.Bifunctor                   (first, second)
 import           Data.Default                     (def)
 import           Data.Either                      (lefts,partitionEithers)
 import           Data.Foldable                    (traverse_)
@@ -170,8 +170,10 @@ normalizeStep q binds = do
       Just id' -> do
         (bound, _) <- MVar.readMVar binds
         unless (id' `elemVarSet` bound) $ do
+          -- immediately mark this work as being done
+          MVar.modifyMVar_ binds (pure . first (`extendVarSet` id'))
           pair <- normalize' id' q
-          MVar.modifyMVar_ binds (pure . bimap (`extendVarSet` id') (pair:))
+          MVar.modifyMVar_ binds (pure . second (pair:))
         normalizeStep q binds
       Nothing  -> pure ()
 
