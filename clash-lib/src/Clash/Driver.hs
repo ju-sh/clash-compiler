@@ -1064,7 +1064,7 @@ normalizeEntity
   -> WHNF.Evaluator
   -- ^ Hardcoded evaluator for WHNF (old evaluator)
   -> MVar ()
-  -- ^ Synchroniztion for stdout
+  -- ^ Synchronization for stdout
   -> [Id]
   -- ^ TopEntities
   -> Supply.Supply
