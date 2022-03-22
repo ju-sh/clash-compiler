@@ -189,7 +189,10 @@ apply = \s rewrite ctx expr0 -> do
           error "apply: Normalizing from an unknown thread"
 
   if isDebugging opts
-    then applyDebug s expr0 hasChanged expr1
+    then do
+      countersV <- Lens.use transformCounters
+      nTrans <- sum <$> MVar.readMVar countersV
+      applyDebug s expr0 hasChanged expr1 nTrans
     else return expr1
 {-# INLINE apply #-}
 
@@ -202,38 +205,26 @@ applyDebug
   -- ^ Whether the rewrite indicated change
   -> Term
   -- ^ New expression
+  -> Word
   -> RewriteMonad extra Term
-applyDebug name exprOld hasChanged exprNew = do
-  countersV <- Lens.use transformCounters
-  counters <- MVar.takeMVar countersV
+applyDebug name exprOld hasChanged exprNew nTrans = do
   opts <- Lens.view debugOpts
 
-  let nTrans = sum counters
   let from = fromMaybe 0 (dbg_transformationsFrom opts)
   let limit = fromMaybe maxBound (dbg_transformationsLimit opts)
 
   if | nTrans - from > limit -> do
-         MVar.putMVar countersV counters
          error "-fclash-debug-transformations-limit exceeded"
      | nTrans <= from -> do
-         MVar.putMVar countersV counters
          pure exprNew
      | otherwise ->
-         go counters (pred nTrans) opts
+         go (pred nTrans) opts
  where
-  go counters nTrans opts = do
+  go nTrans' opts = do
     ioLockV <- Lens.use ioLock
 
     MVar.withMVar ioLockV $ \() ->
       traceWhen (hasDebugInfo TryTerm name opts) ("Tried: " ++ name ++ " on:\n" ++ before)
-
-    countersV <- Lens.use transformCounters
-
-    Monad.when (dbg_countTransformations opts && hasChanged) $
-      MVar.putMVar countersV (HashMap.insertWith (const succ) (Text.pack name) 1 counters)
-
-    Monad.unless (dbg_countTransformations opts && hasChanged) $
-      MVar.putMVar countersV counters
 
     Monad.when (dbg_invariants opts && hasChanged) $ do
       tcm                  <- Lens.view tcCache
@@ -285,7 +276,7 @@ applyDebug name exprOld hasChanged exprNew = do
                         ++ before ++ "\nafter:\n" ++ after
 
     MVar.withMVar ioLockV $ \() -> do
-      traceWhen (hasDebugInfo AppliedName name opts && hasChanged) (name <> " {" <> show nTrans <> "}")
+      traceWhen (hasDebugInfo AppliedName name opts && hasChanged) (name <> " {" <> show nTrans' <> "}")
       traceWhen (hasDebugInfo AppliedTerm name opts && hasChanged)
         ("Changes when applying rewrite to:\n" ++ before ++ "\nResult:\n" ++ after ++ "\n")
       traceWhen (hasDebugInfo TryTerm name opts && not hasChanged)
