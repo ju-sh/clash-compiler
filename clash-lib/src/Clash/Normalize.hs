@@ -182,7 +182,6 @@ normalize' nm q = do
   bndrsV <- Lens.use bindings
   exprM <- MVar.withMVar bndrsV (pure . lookupVarEnv nm)
   let nmS = showPpr (varName nm)
-  -- traceM ("normalize: start " <> nmS)
   case exprM of
     Just (Binding nm' sp inl pr tm r) -> do
       tcm <- Lens.view tcCache
@@ -228,8 +227,6 @@ normalize' nm q = do
                     toNormalize = filter (`notElemVarSet` topEnts)
                                 $ filter (`notElemVarEnv` extendVarEnv nm nm prevNorm) usedBndrs
                  in pure toNormalize
-
-            -- traceM ("normalize: end: " <> nmS)
 
             traverse_ (Monad.liftIO . MS.pushL q) toNormalize
             pure (nm, tmNorm)
