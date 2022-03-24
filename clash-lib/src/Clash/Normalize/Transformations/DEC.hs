@@ -295,17 +295,16 @@ collectGlobals' is0 substitution seen e@(collectArgsTicks -> (fun, args@(_:_), t
     tcm <- Lens.view tcCache
     bndrsV <- Lens.use bindings
     evaluate <- Lens.view evaluator
-    idsV <- Lens.use uniqSupply
-    ids <- MVar.modifyMVar idsV $ \uniqs ->
-      let (!u1, !u2) = splitSupply uniqs
-       in pure (u1, u2)
+    ids <- Lens.use uniqSupply
+    let (ids1,ids2) = splitSupply ids
+    uniqSupply Lens..= ids2
 
     ghV <- Lens.use globalHeap
 
     eval <-
       MVar.withMVar bndrsV $ \bndrs ->
         MVar.withMVar ghV $ \gh ->
-          pure $ (Lens.view Lens._3) . whnf' evaluate bndrs tcm gh ids is0 False
+          pure $ (Lens.view Lens._3) . whnf' evaluate bndrs tcm gh ids1 is0 False
 
     let eTy  = inferCoreTypeOf tcm e
     untran <- isUntranslatableType False eTy

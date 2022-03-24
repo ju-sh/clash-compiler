@@ -29,10 +29,9 @@ module Clash.Rewrite.Types where
 
 import Control.Applicative                   (Alternative)
 import Control.Concurrent                    (MVar, ThreadId)
-import qualified Control.Concurrent.MVar.Lifted as MVar
 import Control.Concurrent.Supply             (Supply, freshId)
 import Control.DeepSeq                       (NFData)
-import Control.Lens                          (Lens', use)
+import Control.Lens                          (Lens', use, (.=))
 import qualified Control.Lens as Lens
 import Control.Monad.Base
 #if !MIN_VERSION_base(4,13,0)
@@ -96,7 +95,7 @@ data RewriteStep
 {-
 Note [strictness in RewriteState]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Prior to concurrent normalization, the _bindings, _uniqSupply and _nameCounter
+Prior to concurrent normalization, the _bindings and _nameCounter
 all had strictness marked in the fields. However, since they are now MVar, it
 is not the field itself that needs to be strict but the contents of the MVar.
 When these are updated in rewriting, it is necessary to use `seq` or bang
@@ -115,7 +114,7 @@ data RewriteState extra
   -- ^ Map that tracks how many times each transformation is applied
   , _bindings         :: MVar BindingMap
   -- ^ Global binders
-  , _uniqSupply       :: MVar Supply
+  , _uniqSupply       :: !Supply
   -- ^ Supply of unique numbers
   , _curFun           :: MVar (HashMap ThreadId (Id,SrcSpan))
   -- ^ Function which is currently normalized for each thread
@@ -282,11 +281,10 @@ instance (Monoid w, MonadBaseControl b m) => MonadBaseControl b (RWST r w s m) w
 
 instance MonadUnique (RewriteMonad extra) where
   getUniqueM = do
-    supplyV <- use uniqSupply
-
-    MVar.modifyMVar supplyV $ \s ->
-      let (!a, !s') = freshId s
-       in pure (s', a)
+    sup <- use uniqSupply
+    let (a,sup') = freshId sup
+    uniqSupply .= sup'
+    a `seq` return a
 
 censor :: (Any -> Any) -> RewriteMonad extra a -> RewriteMonad extra a
 censor f = R . RWS.censor f . unR

@@ -86,7 +86,7 @@ defRewriteState = do
   RewriteState
     <$> newMVar mempty
     <*> newMVar emptyVarEnv
-    <*> (newSupply >>= newMVar)
+    <*> newSupply
     <*> pure (error "_curFun: NYI")
     <*> newMVar 2
     <*> newMVar (error "_globalHeap: NYI")

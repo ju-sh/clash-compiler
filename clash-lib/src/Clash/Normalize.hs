@@ -20,13 +20,13 @@ module Clash.Normalize where
 import qualified Control.Concurrent.Async.Lifted as Async
 import           Control.Concurrent.MVar.Lifted (MVar)
 import qualified Control.Concurrent.MVar.Lifted as MVar
-import           Control.Concurrent.Supply        (Supply)
+import           Control.Concurrent.Supply        (Supply, splitSupply)
 import           Control.Exception                (throw)
 import qualified Control.Lens                     as Lens
-import           Control.Monad                    (when, unless)
+import           Control.Monad                    (when)
 import qualified Control.Monad.IO.Class as Monad  (liftIO)
 import           Control.Monad.State.Strict       (State)
-import           Data.Bifunctor                   (first, second)
+import           Data.Bifunctor                   (second)
 import           Data.Default                     (def)
 import           Data.Either                      (lefts,partitionEithers)
 import           Data.Foldable                    (traverse_)
@@ -71,7 +71,7 @@ import           Clash.Core.Var                   (Id, varName, varType)
 import           Clash.Core.VarEnv
   (VarEnv, VarSet, elemVarSet, eltsVarEnv, emptyInScopeSet, emptyVarEnv, emptyVarSet,
    extendVarEnv, extendVarSet, lookupVarEnv, mapVarEnv, mapMaybeVarEnv,
-   mkVarEnv, mkVarSet, notElemVarEnv, notElemVarSet, nullVarEnv)
+   mkVarEnv, mkVarSet, notElemVarEnv, notElemVarSet, nullVarEnv, unionVarEnv)
 import           Clash.Debug                      (traceIf)
 import           Clash.Driver.Types
   (BindingMap, Binding(..), DebugOpts(..), ClashEnv(..))
@@ -85,7 +85,7 @@ import           Clash.Normalize.Types
 import           Clash.Normalize.Util
 import           Clash.Rewrite.Combinators        ((>->),(!->),repeatR,topdownR)
 import           Clash.Rewrite.Types
-  (RewriteEnv (..), RewriteState (..), bindings, debugOpts, extra,
+  (RewriteEnv (..), RewriteState (..), bindings, debugOpts, extra, uniqSupply,
    tcCache, topEntities, newInlineStrategy, ioLock)
 import           Clash.Rewrite.Util
   (apply, isUntranslatableType, runRewriteSession)
@@ -133,7 +133,7 @@ runNormalization env supply globals typeTrans peEval eval rcsMap lock entities s
   rwState <- RewriteState
     <$> MVar.newMVar mempty
     <*> MVar.newMVar globals
-    <*> MVar.newMVar supply
+    <*> pure supply
     <*> MVar.newMVar HashMap.empty
     <*> MVar.newMVar 0
     <*> MVar.newMVar (mempty, 0)
@@ -151,20 +151,28 @@ runNormalization env supply globals typeTrans peEval eval rcsMap lock entities s
     , _topEntities = mkVarSet entities
     }
 
+supplies :: Int -> Supply -> [Supply]
+supplies 0 _ = []
+supplies n s = let (s0', s1') = splitSupply s in s0' : supplies (n-1) s1'
+
 normalize :: [Id] -> NormalizeSession BindingMap
 normalize tops = do
   q <- Monad.liftIO MS.newQ
   traverse_ (Monad.liftIO . MS.pushL q) tops
   binds <- MVar.newMVar (emptyVarSet, [])
+  uniq0 <- Lens.use uniqSupply
+  let ss = supplies (length tops) uniq0
   -- one thread per top-level binding
-  Async.replicateConcurrently_ (length tops) (normalizeStep q binds)
+  Async.mapConcurrently_ (normalizeStep q binds) ss
   mkVarEnv . snd <$> MVar.readMVar binds
 
 normalizeStep
     :: MS.LinkedQueue Id
     -> MVar (VarSet, [(Id, Binding Term)])
+    -> Supply
     -> NormalizeSession ()
-normalizeStep q binds = do
+normalizeStep q binds s = do
+  uniqSupply Lens..= s
   res <- Monad.liftIO $ MS.tryPopR q
   case res of
       Just id' -> do
@@ -177,7 +185,8 @@ normalizeStep q binds = do
             MVar.modifyMVar_ binds (pure . second (pair:))
           else
             MVar.putMVar binds (bound, pairs)
-        normalizeStep q binds
+        nextS <- Lens.use uniqSupply
+        normalizeStep q binds nextS
       Nothing  -> pure ()
 
 normalize' :: Id -> MS.LinkedQueue Id -> NormalizeSession (Id, Binding Term)

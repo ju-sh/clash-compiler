@@ -756,20 +756,19 @@ whnfRW isSubj (TransformContext is0 hist) e0 rw = do
   eval <- Lens.view evaluator
 
   bndrsV <- Lens.use bindings
-  idsV <- Lens.use uniqSupply
+  ids <- Lens.use uniqSupply
   ghV <- Lens.use globalHeap
 
   bndrs <- MVar.takeMVar bndrsV
-  ids <- MVar.takeMVar idsV
   gh <- MVar.takeMVar ghV
 
   let (ids1,ids2) = splitSupply ids
+  uniqSupply Lens..= ids2
 
   case whnf' eval bndrs tcm gh ids1 is0 isSubj e0 of
     (!gh1,ph,v) -> do
       let result = bindPureHeap tcm bndrs ph v
       MVar.putMVar bndrsV bndrs
-      MVar.putMVar idsV ids2
       MVar.putMVar ghV gh1
       result
  where
