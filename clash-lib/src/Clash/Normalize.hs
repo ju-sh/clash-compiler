@@ -168,12 +168,15 @@ normalizeStep q binds = do
   res <- Monad.liftIO $ MS.tryPopR q
   case res of
       Just id' -> do
-        (bound, _) <- MVar.readMVar binds
-        unless (id' `elemVarSet` bound) $ do
-          -- immediately mark this work as being done
-          MVar.modifyMVar_ binds (pure . first (`extendVarSet` id'))
-          pair <- normalize' id' q
-          MVar.modifyMVar_ binds (pure . second (pair:))
+        (bound, pairs) <- MVar.takeMVar binds
+        if not (id' `elemVarSet` bound)
+          then do
+            -- mark that we are attempting to normalize id'
+            MVar.putMVar binds (bound `extendVarSet` id', pairs)
+            pair <- normalize' id' q
+            MVar.modifyMVar_ binds (pure . second (pair:))
+          else
+            MVar.putMVar binds (bound, pairs)
         normalizeStep q binds
       Nothing  -> pure ()
 
