@@ -55,7 +55,7 @@ lookupTM u tm = case HashMap.lookup u tm of
   Nothing ->
     error [I.i|
       Tried to lookup unique '#{u}' in typemap, but couldn't find it. This
-      usually means you forgot to (explicitely) declare a variable's type.
+      usually means you forgot to (explicitly) declare a variable's type.
     |]
 
 instance Default RewriteEnv where
